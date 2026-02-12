@@ -1,0 +1,56 @@
+{
+  "name": "nexus-bridge-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for cross-chain bridging via Avail Nexus — runs locally alongside AI agents",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "nexus-bridge-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "clean": "rm -rf dist",
+    "build": "rm -rf dist && tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "bridge",
+    "cross-chain",
+    "nexus",
+    "avail",
+    "ai-agents",
+    "x402",
+    "blockchain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@avail-project/nexus-core": "^1.1.0",
+    "@improbable-eng/grpc-web": "^0.15.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "dotenv": "^16.6.1",
+    "viem": "^2.28.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@typescript-eslint/eslint-plugin": "^8.22.0",
+    "@typescript-eslint/parser": "^8.22.0",
+    "eslint": "^9.19.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^3.0.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
