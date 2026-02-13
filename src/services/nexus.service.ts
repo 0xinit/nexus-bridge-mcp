@@ -168,6 +168,143 @@ export class NexusService {
     return this.initialized && this.sdk !== null;
   }
 
+  /**
+   * Get balances available for bridging across all chains
+   */
+  async getBalancesForBridge(): Promise<BridgeBalance[]> {
+    this.ensureInitialized();
+    return this.sdk.getBalancesForBridge();
+  }
+
+  /**
+   * Simulate a bridge operation to get fee estimates
+   */
+  async simulateBridge(params: BridgeParams): Promise<BridgeSimulation> {
+    this.ensureInitialized();
+
+    const simulation = await this.sdk.simulateBridge({
+      token: params.token,
+      amount: params.amount,
+      toChainId: params.toChainId,
+      sourceChains: params.sourceChains,
+    });
+
+    return {
+      fees: {
+        protocol: simulation.fees?.protocol || "0",
+        gas: simulation.fees?.gas || "0",
+        total: simulation.fees?.total || "0",
+      },
+      estimatedTime: simulation.estimatedTime || "2-5 minutes",
+      route: {
+        sourceChain: simulation.route?.sourceChain || 0,
+        targetChain: params.toChainId,
+        token: params.token,
+      },
+    };
+  }
+
+  /**
+   * Get a bridge quote (simulation + instructions for agent-side execution).
+   * This is a read-only operation that doesn't require wallet initialization.
+   */
+  async getQuote(params: BridgeParams): Promise<BridgeQuote> {
+    this.ensureInitialized();
+
+    const simulation = await this.simulateBridge(params);
+
+    return {
+      ...simulation,
+      params: {
+        token: params.token,
+        amount: params.amount.toString(),
+        fromChainId: simulation.route.sourceChain,
+        toChainId: params.toChainId,
+      },
+      instructions: {
+        sdk: "@avail-project/nexus-core",
+        method: "sdk.bridge({ token, amount, toChainId })",
+        note: "Agent must execute bridge locally with its own wallet provider",
+      },
+    };
+  }
+
+  /**
+   * Execute a bridge operation
+   */
+  async bridge(params: BridgeParams, options?: BridgeEventHandler): Promise<BridgeResult> {
+    this.ensureInitialized();
+
+    try {
+      const result = await this.sdk.bridge(
+        {
+          token: params.token,
+          amount: params.amount,
+          toChainId: params.toChainId,
+          sourceChains: params.sourceChains,
+        },
+        {
+          onEvent: (event: BridgeEvent) => {
+            console.error(`[Nexus] Bridge event: ${event.type}`);
+            options?.onEvent?.(event);
+          },
+        }
+      );
+
+      return {
+        success: true,
+        explorerUrl: result.explorerUrl,
+        txHash: result.txHash,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Bridge operation failed";
+      console.error("[Nexus] Bridge failed:", message);
+      return {
+        success: false,
+        error: message,
+      };
+    }
+  }
+
+  /**
+   * Bridge tokens and transfer to a different recipient
+   */
+  async bridgeAndTransfer(
+    params: BridgeParams & { recipient: string },
+    options?: BridgeEventHandler
+  ): Promise<BridgeResult> {
+    this.ensureInitialized();
+
+    try {
+      const result = await this.sdk.bridgeAndTransfer(
+        {
+          token: params.token,
+          amount: params.amount,
+          toChainId: params.toChainId,
+          recipient: params.recipient,
+          sourceChains: params.sourceChains,
+        },
+        {
+          onEvent: (event: BridgeEvent) => {
+            options?.onEvent?.(event);
+          },
+        }
+      );
+
+      return {
+        success: true,
+        explorerUrl: result.explorerUrl,
+        txHash: result.txHash,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Bridge and transfer failed";
+      return {
+        success: false,
+        error: message,
+      };
+    }
+  }
+
   private ensureInitialized(): void {
     if (!this.initialized || !this.sdk) {
       throw new Error(
