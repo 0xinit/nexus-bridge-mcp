@@ -119,6 +119,50 @@ export function createEip1193Provider(
           return null;
         }
 
+        case "eth_sendTransaction": {
+          const tx = paramArray[0] as Record<string, unknown>;
+          console.error(`[EIP-1193] eth_sendTransaction on chain ${currentChainId}:`);
+          console.error(`  to: ${tx.to}`);
+          console.error(`  value: ${tx.value ?? "0"}`);
+          console.error(`  data: ${typeof tx.data === "string" ? tx.data.slice(0, 20) + "..." : "none"}`);
+          const { walletClient } = getClients(currentChainId);
+          const hash = await walletClient.sendTransaction({
+            account,
+            to: tx.to as Hex,
+            value: tx.value ? BigInt(tx.value as string) : undefined,
+            data: tx.data as Hex | undefined,
+            gas: tx.gas ? BigInt(tx.gas as string) : undefined,
+          });
+          console.error(`[EIP-1193] tx hash: ${hash}`);
+          return hash;
+        }
+
+        case "personal_sign":
+        case "eth_sign": {
+          // personal_sign sends [hexEncodedMessage, address]
+          // Pass as raw hex so viem signs the actual bytes, not the hex string literal
+          const hexMessage = paramArray[0] as Hex;
+          console.error(`[EIP-1193] ${method}: message=${typeof hexMessage === "string" ? hexMessage.slice(0, 40) + "..." : "non-string"}, address=${paramArray[1]}`);
+          const sig = await account.signMessage({ message: { raw: hexMessage } });
+          console.error(`[EIP-1193] ${method}: signature=${typeof sig === "string" ? sig.slice(0, 20) + "..." : "non-string"}`);
+          return sig;
+        }
+
+        case "eth_signTypedData_v4": {
+          const typedDataStr = paramArray[1] as string;
+          console.error(`[EIP-1193] eth_signTypedData_v4: data length=${typedDataStr?.length ?? 0}`);
+          const parsed = JSON.parse(typedDataStr);
+          // Strip EIP712Domain from types — viem's signTypedData reconstructs it
+          // from the domain parameter (matching the ethers.js convention)
+          const { EIP712Domain: _, ...typesWithoutDomain } = parsed.types ?? {};
+          const sig = await account.signTypedData({
+            ...parsed,
+            types: typesWithoutDomain,
+          });
+          console.error(`[EIP-1193] eth_signTypedData_v4: signature=${typeof sig === "string" ? sig.slice(0, 20) + "..."  : "non-string"}`);
+          return sig;
+        }
+
         default: {
           // Delegate all other RPC calls (eth_call, eth_getBalance, etc.) to the public client
           console.error(`[EIP-1193] RPC: ${method} on chain ${currentChainId}`);
