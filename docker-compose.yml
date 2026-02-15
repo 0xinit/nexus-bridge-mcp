@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4021:4021"
+    environment:
+      - NODE_ENV=production
+      - PORT=4021
+      - NETWORK_MODE=${NETWORK_MODE:-testnet}
+      - PAYMENT_ADDRESS_EVM=${PAYMENT_ADDRESS_EVM}
+      - FACILITATOR_URL=${FACILITATOR_URL:-https://x402.org/facilitator}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4021/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Development service with hot reload
+  api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "4021:4021"
+    volumes:
+      - ./src:/app/src:ro
+      - ./package.json:/app/package.json:ro
+    environment:
+      - NODE_ENV=development
+      - PORT=4021
+      - NETWORK_MODE=testnet
+      - PAYMENT_ADDRESS_EVM=${PAYMENT_ADDRESS_EVM:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}
+      - FACILITATOR_URL=${FACILITATOR_URL:-https://x402.org/facilitator}
+    profiles:
+      - dev
