@@ -10,7 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { getSupportedChains, getChainById } from "./config/chains.js";
 import { getTokensForChain, getTokenAddress, SUPPORTED_TOKENS } from "./config/tokens.js";
-import { config, isTestnet } from "./config/env.js";
+import { config } from "./config/env.js";
 import { getMultiChainBalances } from "./services/balance.service.js";
 import { NexusService } from "./services/nexus.service.js";
 import { reportBridgeStatus, getBridgeStatus } from "./services/status.service.js";
@@ -36,6 +36,17 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import type { Chain, Hex } from "viem";
 
+const networkSchema = z.enum(["testnet", "mainnet"]).optional()
+  .describe("Network to use: 'testnet' or 'mainnet'. Defaults to NETWORK_MODE env var.");
+
+function resolveTestnet(network?: "testnet" | "mainnet"): boolean {
+  return (network ?? config.NETWORK_MODE) === "testnet";
+}
+
+function resolveNetworkMode(network?: "testnet" | "mainnet"): "testnet" | "mainnet" {
+  return network ?? config.NETWORK_MODE;
+}
+
 const VIEM_CHAINS: Record<number, Chain> = {
   1: mainnet,
   8453: base,
@@ -49,21 +60,23 @@ const VIEM_CHAINS: Record<number, Chain> = {
 };
 
 // Nexus vault contract addresses (from ca-common) — tokens must be approved to these
-const VAULT_CONTRACTS: Record<number, Hex> = isTestnet
-  ? {
-      // FOLLY environment (testnet)
-      84532: "0xa7458040272226378397c3036eda862d60c3b307",   // Base Sepolia
-      11155420: "0x10b69f0e3c21c1187526940a615959e9ee6012f9", // OP Sepolia
-      421614: "0x10b69f0e3c21c1187526940a615959e9ee6012f9",   // Arbitrum Sepolia
-      11155111: "0xd579b76e3f51884c50eb8e8efdef5c593666b8fb", // Sepolia
-    }
-  : {
-      // CORAL environment (mainnet) — SDK maps 'mainnet' → CORAL, not CERISE
-      8453: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",    // Base
-      10: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",      // Optimism
-      42161: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",   // Arbitrum
-      137: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",     // Polygon
-    };
+function getVaultContracts(testnet: boolean): Record<number, Hex> {
+  return testnet
+    ? {
+        // FOLLY environment (testnet)
+        84532: "0xa7458040272226378397c3036eda862d60c3b307",   // Base Sepolia
+        11155420: "0x10b69f0e3c21c1187526940a615959e9ee6012f9", // OP Sepolia
+        421614: "0x10b69f0e3c21c1187526940a615959e9ee6012f9",   // Arbitrum Sepolia
+        11155111: "0xd579b76e3f51884c50eb8e8efdef5c593666b8fb", // Sepolia
+      }
+    : {
+        // CORAL environment (mainnet) — SDK maps 'mainnet' → CORAL, not CERISE
+        8453: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",    // Base
+        10: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",      // Optimism
+        42161: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",   // Arbitrum
+        137: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",     // Polygon
+      };
+}
 
 const ERC20_ABI = parseAbi([
   "function approve(address spender, uint256 amount) returns (bool)",
@@ -79,17 +92,18 @@ const server = new McpServer({
 
 server.tool(
   "get_chains",
-  "List supported blockchain networks for cross-chain bridging",
-  {},
-  async () => {
-    const chains = getSupportedChains(isTestnet);
+  "List supported blockchain networks for cross-chain bridging. Optionally specify 'testnet' or 'mainnet' network (defaults to NETWORK_MODE env var).",
+  { network: networkSchema },
+  async ({ network }) => {
+    const testnet = resolveTestnet(network);
+    const chains = getSupportedChains(testnet);
     return {
       content: [
         {
           type: "text" as const,
           text: JSON.stringify(
             {
-              networkMode: config.NETWORK_MODE,
+              networkMode: resolveNetworkMode(network),
               chains: chains.map((c) => ({
                 id: c.id,
                 name: c.name,
@@ -111,17 +125,22 @@ server.tool(
 
 server.tool(
   "get_tokens",
-  "List supported tokens per chain with contract addresses",
-  { chainId: z.number().int().positive().optional().describe("Filter by specific chain ID") },
-  async ({ chainId }) => {
-    const chains = getSupportedChains(isTestnet);
+  "List supported tokens per chain with contract addresses. Optionally specify 'testnet' or 'mainnet' network.",
+  {
+    chainId: z.number().int().positive().optional().describe("Filter by specific chain ID"),
+    network: networkSchema,
+  },
+  async ({ chainId, network }) => {
+    const networkMode = resolveNetworkMode(network);
+    const testnet = networkMode === "testnet";
+    const chains = getSupportedChains(testnet);
     const targetChains = chainId
       ? chains.filter((c) => c.id === chainId)
       : chains;
 
     if (chainId && targetChains.length === 0) {
       return {
-        content: [{ type: "text" as const, text: `Chain ${chainId} is not supported in ${config.NETWORK_MODE} mode.` }],
+        content: [{ type: "text" as const, text: `Chain ${chainId} is not supported in ${networkMode} mode.` }],
         isError: true,
       };
     }
@@ -142,10 +161,15 @@ server.tool(
 
 server.tool(
   "check_balances",
-  "Check multi-chain ERC-20 token balances for a wallet address",
-  { address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).describe("Ethereum wallet address") },
-  async ({ address }) => {
-    const balances = await getMultiChainBalances(address as `0x${string}`, isTestnet);
+  "Check multi-chain ERC-20 token balances for a wallet address. Optionally specify 'testnet' or 'mainnet' network.",
+  {
+    address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).describe("Ethereum wallet address"),
+    network: networkSchema,
+  },
+  async ({ address, network }) => {
+    const networkMode = resolveNetworkMode(network);
+    const testnet = networkMode === "testnet";
+    const balances = await getMultiChainBalances(address as `0x${string}`, testnet);
     return {
       content: [
         {
@@ -153,7 +177,7 @@ server.tool(
           text: JSON.stringify(
             {
               address,
-              networkMode: config.NETWORK_MODE,
+              networkMode,
               balances: balances.map((b) => ({
                 chain: b.chainName,
                 chainId: b.chainId,
@@ -175,26 +199,29 @@ server.tool(
 
 server.tool(
   "get_bridge_quote",
-  "Get a fee estimate and route for bridging tokens between chains",
+  "Get a fee estimate and route for bridging tokens between chains. Optionally specify 'testnet' or 'mainnet' network.",
   {
     fromChainId: z.number().int().positive().describe("Source chain ID"),
     toChainId: z.number().int().positive().describe("Destination chain ID"),
     token: z.string().describe("Token symbol (e.g. USDC)"),
     amount: z.string().describe("Amount in token units (e.g. '1.5' for 1.5 USDC)"),
+    network: networkSchema,
   },
-  async ({ fromChainId, toChainId, token, amount }) => {
-    const fromChain = getChainById(fromChainId, isTestnet);
-    const toChain = getChainById(toChainId, isTestnet);
+  async ({ fromChainId, toChainId, token, amount, network }) => {
+    const networkMode = resolveNetworkMode(network);
+    const testnet = networkMode === "testnet";
+    const fromChain = getChainById(fromChainId, testnet);
+    const toChain = getChainById(toChainId, testnet);
 
     if (!fromChain) {
       return {
-        content: [{ type: "text" as const, text: `Source chain ${fromChainId} not supported in ${config.NETWORK_MODE} mode.` }],
+        content: [{ type: "text" as const, text: `Source chain ${fromChainId} not supported in ${networkMode} mode.` }],
         isError: true,
       };
     }
     if (!toChain) {
       return {
-        content: [{ type: "text" as const, text: `Destination chain ${toChainId} not supported in ${config.NETWORK_MODE} mode.` }],
+        content: [{ type: "text" as const, text: `Destination chain ${toChainId} not supported in ${networkMode} mode.` }],
         isError: true,
       };
     }
@@ -253,14 +280,15 @@ server.tool(
 
 server.tool(
   "execute_bridge",
-  "Execute a cross-chain token bridge using the local wallet (requires PRIVATE_KEY in env)",
+  "Execute a cross-chain token bridge using the local wallet (requires PRIVATE_KEY in env). Optionally specify 'testnet' or 'mainnet' network.",
   {
     fromChainId: z.number().int().positive().describe("Source chain ID"),
     toChainId: z.number().int().positive().describe("Destination chain ID"),
     token: z.string().describe("Token symbol (e.g. USDC)"),
     amount: z.string().describe("Amount in token units (e.g. '1.5' for 1.5 USDC)"),
+    network: networkSchema,
   },
-  async ({ fromChainId, toChainId, token, amount }) => {
+  async ({ fromChainId, toChainId, token, amount, network }) => {
     if (!config.PRIVATE_KEY) {
       return {
         content: [{ type: "text" as const, text: "PRIVATE_KEY is not set in environment. Cannot execute bridge without a wallet." }],
@@ -268,18 +296,20 @@ server.tool(
       };
     }
 
-    const fromChain = getChainById(fromChainId, isTestnet);
-    const toChain = getChainById(toChainId, isTestnet);
+    const networkMode = resolveNetworkMode(network);
+    const testnet = networkMode === "testnet";
+    const fromChain = getChainById(fromChainId, testnet);
+    const toChain = getChainById(toChainId, testnet);
 
     if (!fromChain) {
       return {
-        content: [{ type: "text" as const, text: `Source chain ${fromChainId} not supported in ${config.NETWORK_MODE} mode.` }],
+        content: [{ type: "text" as const, text: `Source chain ${fromChainId} not supported in ${networkMode} mode.` }],
         isError: true,
       };
     }
     if (!toChain) {
       return {
-        content: [{ type: "text" as const, text: `Destination chain ${toChainId} not supported in ${config.NETWORK_MODE} mode.` }],
+        content: [{ type: "text" as const, text: `Destination chain ${toChainId} not supported in ${networkMode} mode.` }],
         isError: true,
       };
     }
@@ -299,7 +329,7 @@ server.tool(
       // Build chain list for the adapter — SDK switches chains during execution.
       // Include Ethereum Sepolia (11155111) even for testnet: the SDK uses it
       // for SIWE authentication during the bridge flow.
-      const allChains = getSupportedChains(isTestnet);
+      const allChains = getSupportedChains(testnet);
       const providerChains = allChains
         .map((c) => {
           const viemChain = VIEM_CHAINS[c.id];
@@ -309,10 +339,10 @@ server.tool(
         .filter((c): c is { chain: Chain; rpcUrl: string | undefined } => c !== null);
 
       // Ensure Ethereum L1 is available for SIWE auth (SDK switches to it during bridge)
-      if (isTestnet && !providerChains.some((c) => c.chain.id === 11155111)) {
+      if (testnet && !providerChains.some((c) => c.chain.id === 11155111)) {
         providerChains.push({ chain: sepolia, rpcUrl: undefined });
       }
-      if (!isTestnet && !providerChains.some((c) => c.chain.id === 1)) {
+      if (!testnet && !providerChains.some((c) => c.chain.id === 1)) {
         providerChains.push({ chain: mainnet, rpcUrl: undefined });
       }
 
@@ -321,7 +351,7 @@ server.tool(
         providerChains,
       );
 
-      const nexus = new NexusService(config.NETWORK_MODE);
+      const nexus = new NexusService(networkMode);
       await nexus.initialize(provider);
 
       const decimals = tokenConfig.decimals;
@@ -330,7 +360,7 @@ server.tool(
       // Pre-approve token to Nexus vault contract to avoid sponsored permit issues.
       // The SDK's sponsored permit flow fails on some testnet tokens, so we set
       // max allowance directly. The SDK then sees sufficient allowance and skips permits.
-      const vaultAddress = VAULT_CONTRACTS[fromChainId];
+      const vaultAddress = getVaultContracts(testnet)[fromChainId];
       const tokenAddress = getTokenAddress(tokenUpper, fromChainId) as Hex | undefined;
       if (vaultAddress && tokenAddress) {
         const account = privateKeyToAccount(config.PRIVATE_KEY as Hex);
