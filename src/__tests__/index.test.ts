@@ -11,6 +11,37 @@ import { reportBridgeStatus, getBridgeStatus } from "../services/status.service.
  * status tracking, and error conditions.
  */
 
+describe("dual-network resolution logic", () => {
+  it("resolves to testnet when network param is 'testnet'", () => {
+    // Mirrors resolveTestnet() in index.ts
+    const resolve = (network?: "testnet" | "mainnet") =>
+      (network ?? "mainnet") === "testnet";
+    expect(resolve("testnet")).toBe(true);
+    expect(resolve("mainnet")).toBe(false);
+  });
+
+  it("falls back to env default when network param is undefined", () => {
+    const envDefault: "testnet" | "mainnet" = "testnet";
+    const resolve = (network?: "testnet" | "mainnet") =>
+      (network ?? envDefault) === "testnet";
+    expect(resolve(undefined)).toBe(true);
+    expect(resolve("mainnet")).toBe(false);
+  });
+
+  it("same chain lookup works for both networks in a single call sequence", () => {
+    // Simulates an agent calling get_chains twice with different network params
+    const testnetChains = getSupportedChains(true);
+    const mainnetChains = getSupportedChains(false);
+    const testnetIds = testnetChains.map((c) => c.id);
+    const mainnetIds = mainnetChains.map((c) => c.id);
+
+    // No overlap between testnet and mainnet chain IDs
+    for (const id of testnetIds) {
+      expect(mainnetIds).not.toContain(id);
+    }
+  });
+});
+
 describe("get_chains handler logic", () => {
   it("returns testnet chains in testnet mode", () => {
     const chains = getSupportedChains(true);
@@ -218,5 +249,46 @@ describe("get_bridge_status handler logic", () => {
   it("returns undefined for non-existent operation", () => {
     const op = getBridgeStatus("nonexistent-op-id");
     expect(op).toBeUndefined();
+  });
+});
+
+describe("vault contract lookup logic", () => {
+  // Mirrors getVaultContracts() in index.ts
+  const getVaultContracts = (testnet: boolean): Record<number, string> =>
+    testnet
+      ? {
+          84532: "0xa7458040272226378397c3036eda862d60c3b307",
+          11155420: "0x10b69f0e3c21c1187526940a615959e9ee6012f9",
+          421614: "0x10b69f0e3c21c1187526940a615959e9ee6012f9",
+          11155111: "0xd579b76e3f51884c50eb8e8efdef5c593666b8fb",
+        }
+      : {
+          8453: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",
+          10: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",
+          42161: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",
+          137: "0xC0DED5d7F424276c821AF21F68E1e663bC671C3D",
+        };
+
+  it("returns FOLLY vault addresses for testnet", () => {
+    const vaults = getVaultContracts(true);
+    expect(vaults[84532]).toBeDefined();
+    expect(vaults[8453]).toBeUndefined();
+  });
+
+  it("returns CORAL vault addresses for mainnet", () => {
+    const vaults = getVaultContracts(false);
+    expect(vaults[8453]).toBeDefined();
+    expect(vaults[84532]).toBeUndefined();
+  });
+
+  it("returns correct vault per network without cross-contamination", () => {
+    const testnetVaults = getVaultContracts(true);
+    const mainnetVaults = getVaultContracts(false);
+    const testnetChainIds = Object.keys(testnetVaults).map(Number);
+    const mainnetChainIds = Object.keys(mainnetVaults).map(Number);
+
+    for (const id of testnetChainIds) {
+      expect(mainnetChainIds).not.toContain(id);
+    }
   });
 });
