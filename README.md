@@ -52,6 +52,34 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
+### OpenAI Agents SDK
+
+```python
+from agents import Agent
+from agents.mcp import MCPServerStdio
+
+async with MCPServerStdio(
+    name="nexus-bridge",
+    params={
+        "command": "node",
+        "args": ["/path/to/nexus-bridge-mcp/dist/index.js"],
+        "env": {
+            "NETWORK_MODE": "mainnet",
+            "PRIVATE_KEY": "0x..."
+        }
+    }
+) as server:
+    agent = Agent(name="Bridge Agent", mcp_servers=[server])
+```
+
+### Any MCP-Compatible Client
+
+This server uses the [Model Context Protocol](https://modelcontextprotocol.io) stdio transport. Any MCP client (Cursor, Windsurf, Goose, Zed, etc.) can connect with:
+
+- **Command:** `node`
+- **Args:** `["/path/to/nexus-bridge-mcp/dist/index.js"]`
+- **Env:** `NETWORK_MODE`, `PRIVATE_KEY` (see below)
+
 ### Environment Variables
 
 | Variable | Required | Default | Description |
@@ -126,20 +154,22 @@ Agent: "Show me chains on both networks"
 
 ## Supported Chains
 
-### Mainnet
-- Base (8453)
-- Optimism (10)
-- Arbitrum (42161)
-- Polygon (137)
-
-### Testnet
-- Base Sepolia (84532)
-- OP Sepolia (11155420)
-- Arbitrum Sepolia (421614)
+| Chain | Chain ID | Network |
+|-------|----------|---------|
+| Base | 8453 | Mainnet |
+| Optimism | 10 | Mainnet |
+| Arbitrum | 42161 | Mainnet |
+| Polygon | 137 | Mainnet |
+| Base Sepolia | 84532 | Testnet |
+| OP Sepolia | 11155420 | Testnet |
+| Arbitrum Sepolia | 421614 | Testnet |
 
 ## Supported Tokens
-- **USDC** — all chains
-- **USDT** — mainnet only
+
+| Token | Mainnet | Testnet |
+|-------|---------|---------|
+| USDC | All chains | All chains |
+| USDT | All chains | — |
 
 ## Bridge Flow
 
@@ -152,11 +182,11 @@ Agent: "Show me chains on both networks"
 
 ```
 Agent's Machine (local)
-├── AI Agent (Claude Code / Desktop)
+├── AI Agent (Claude Code, OpenAI Agents SDK, Cursor, etc.)
 │   └── calls MCP tools over stdio
 │
 └── MCP Server (nexus-bridge) — subprocess
-    ├── PRIVATE_KEY from env (never sent to Claude)
+    ├── PRIVATE_KEY from env (never sent to the agent)
     ├── viem for chain reads + tx signing
     ├── EIP-1193 adapter (viem ↔ Nexus SDK)
     └── Nexus SDK for bridge execution

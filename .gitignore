@@ -32,8 +32,9 @@ coverage/
 tmp/
 temp/
 
-# Plans (local development)
+# Plans and memory (local development)
 /plans
+MEMORY.md
 
 # plugin docs
 /docs
